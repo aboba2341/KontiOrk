@@ -1,17 +1,41 @@
-FROM python:3.11-slim
-
-LABEL maintainer="martens@lab.local"
-LABEL version="1.0"
+# ===== Стадия 1 (builder): установка зависимостей =====
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
+# Виртуальное окружение: все библиотеки в одной переносимой папке
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Зависимости копируются отдельно от кода, чтобы слой
+# с установкой кэшировался при изменении только кода
 COPY requirements.txt .
 
-RUN pip install -r requirements.txt
+# --no-cache-dir: кэш pip не сохраняется в слое образа
+RUN pip install --no-cache-dir -r requirements.txt
 
+# ===== Стадия 2 (runner): финальный образ =====
+FROM python:3.11-slim AS runner
+
+LABEL maintainer="martens@lab.local"
+LABEL version="3.0"
+
+WORKDIR /app
+
+# Из builder переносится только готовое окружение
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Код приложения (мусор отфильтрован .dockerignore)
 COPY app/ ./app/
 
-EXPOSE 5467
+# Порт, который слушает приложение
+EXPOSE 8037
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5467"]
+# Проверка здоровья через Python: curl в slim-образе отсутствует.
+# urlopen бросает исключение при ошибке/коде >= 400 -> код выхода 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8037/health', timeout=4)"]
 
+# Запуск приложения (exec-форма: uvicorn становится PID 1)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8037"]
