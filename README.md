@@ -124,3 +124,41 @@ curl http://localhost:8000/notes
 4. `curl http://localhost:8000/weather/London` — должен вернуть температуру, влажность, ветер
 5. `docker inspect --format='{{.State.Health.Status}}' personal-assistant` — должен вернуть `healthy`
 
+
+## Хранение данных (ЛР3)
+
+| Ресурс | Имя | Назначение |
+|---|---|---|
+| Volume | `martens-pgdata` | Данные PostgreSQL (`/var/lib/postgresql/data`), переживают удаление контейнеров |
+| Bind mount | `./config` → `/app/config` (`:ro`) | Конфигурация приложения, меняется на хосте без пересборки образа |
+| Сеть | `martens-backend` | Изолированная сеть для БД и приложения, DNS по именам контейнеров |
+
+### Запуск
+
+```bash
+docker volume create martens-pgdata
+docker network create martens-backend
+
+docker run -d \
+  --name martens-postgres \
+  --network martens-backend \
+  -e POSTGRES_USER=user_37 \
+  -e POSTGRES_PASSWORD=<пароль> \
+  -e POSTGRES_DB=martens37 \
+  -v martens-pgdata:/var/lib/postgresql/data \
+  postgres:15
+
+docker build -t martens-assistant:v3 .
+
+docker run -d \
+  --name martens-assistant \
+  --network martens-backend \
+  -p 8037:8037 \
+  -e APP_OWNER=martens \
+  -e APP_SECRET=<секретный_ключ> \
+  -e DATABASE_URL="postgresql://user_37:<пароль>@martens-postgres:5432/martens37" \
+  -v $(pwd)/config:/app/config:ro \
+  martens-assistant:v3
+```
+
+PostgreSQL не публикует порт на хост: доступ к БД есть только у контейнеров в сети `martens-backend`.
